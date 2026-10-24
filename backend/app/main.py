@@ -3,10 +3,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from pwdlib import PasswordHash
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
-from app.models import Vehicle
+from app.models import User, Vehicle
+
+
+password_hash = PasswordHash.recommended()
 
 
 @asynccontextmanager
@@ -29,6 +34,11 @@ class VehicleCreate(BaseModel):
     quantity: int = Field(ge=0)
 
 
+class UserRegister(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=128)
+
+
 @app.get("/api/vehicles")
 def list_vehicles(db: Session = Depends(get_db)):
     return db.query(Vehicle).order_by(Vehicle.id).all()
@@ -45,3 +55,44 @@ def create_vehicle(
     db.refresh(vehicle)
     return vehicle
 
+
+@app.post("/api/auth/register", status_code=201)
+def register_user(
+    user_data: UserRegister,
+    db: Session = Depends(get_db),
+):
+    existing_user = (
+        db.query(User)
+        .filter(User.username == user_data.username)
+        .first()
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="Username already exists",
+        )
+
+    user = User(
+        username=user_data.username,
+        hashed_password=password_hash.hash(user_data.password),
+        role="user",
+    )
+    db.add(user)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Username already exists",
+        )
+
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+    }

@@ -81,3 +81,29 @@ def test_created_vehicle_appears_in_inventory(client):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["make"] == "Toyota"
+
+def test_register_user(client):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "keerthi",
+            "password": "StrongPass123!",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["username"] == "keerthi"
+    assert "password" not in data
+
+
+def test_register_duplicate_username_returns_conflict(client):
+    user = {
+        "username": "keerthi",
+        "password": "StrongPass123!",
+    }
+
+    client.post("/api/auth/register", json=user)
+    response = client.post("/api/auth/register", json=user)
+
+    assert response.status_code == 409
