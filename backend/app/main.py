@@ -1,7 +1,10 @@
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
+import jwt
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
@@ -12,7 +15,17 @@ from app.models import User, Vehicle
 
 
 password_hash = PasswordHash.recommended()
+SECRET_KEY = "dev-only-change-this-before-deployment"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+
+def create_access_token(username: str) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    payload = {"sub": username, "exp": expires_at}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,4 +108,30 @@ def register_user(
         "id": user.id,
         "username": user.username,
         "role": user.role,
+    }
+@app.post("/api/auth/login")
+def login_user(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    user = (
+        db.query(User)
+        .filter(User.username == form_data.username)
+        .first()
+    )
+
+    if user is None or not password_hash.verify(
+        form_data.password, user.hashed_password
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(user.username)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
     }

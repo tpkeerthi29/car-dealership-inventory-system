@@ -107,3 +107,58 @@ def test_register_duplicate_username_returns_conflict(client):
     response = client.post("/api/auth/register", json=user)
 
     assert response.status_code == 409
+
+def test_login_returns_access_token(client):
+    client.post(
+        "/api/auth/register",
+        json={
+            "username": "keerthi",
+            "password": "StrongPass123!",
+        },
+    )
+
+    response = client.post(
+        "/api/auth/login",
+        data={
+            "username": "keerthi",
+            "password": "StrongPass123!",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["token_type"] == "bearer"
+    assert isinstance(data["access_token"], str)
+    assert len(data["access_token"]) > 0
+
+
+def test_login_rejects_wrong_password(client):
+    client.post(
+        "/api/auth/register",
+        json={
+            "username": "keerthi",
+            "password": "StrongPass123!",
+        },
+    )
+
+    response = client.post(
+        "/api/auth/login",
+        data={
+            "username": "keerthi",
+            "password": "WrongPass123!",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_login_rejects_unknown_username(client):
+    response = client.post(
+        "/api/auth/login",
+        data={
+            "username": "unknown_user",
+            "password": "StrongPass123!",
+        },
+    )
+
+    assert response.status_code == 401
