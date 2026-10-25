@@ -3,8 +3,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    OAuth2PasswordRequestForm,
+)
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +30,62 @@ def create_access_token(username: str) -> str:
     )
     payload = {"sub": username, "exp": expires_at}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    db: Session = Depends(get_db),
+):
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+        username = payload.get("sub")
+
+        if not username:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid token",
+            )
+
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.username == username).first()
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found",
+        )
+
+    return user
+
+def require_admin(
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator access required",
+        )
+
+    return current_user
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,20 +112,146 @@ class UserRegister(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
-@app.get("/api/vehicles")
-def list_vehicles(db: Session = Depends(get_db)):
-    return db.query(Vehicle).order_by(Vehicle.id).all()
 
+@app.get("/api/vehicles")
+def list_vehicles(
+    make: str | None = None,
+    model: str | None = None,
+    category: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Vehicle)
+
+    if make:
+        query = query.filter(Vehicle.make.ilike(f"%{make}%"))
+
+    if model:
+        query = query.filter(Vehicle.model.ilike(f"%{model}%"))
+
+    if category:
+        query = query.filter(Vehicle.category.ilike(f"%{category}%"))
+
+    return query.order_by(Vehicle.id).all()
 
 @app.post("/api/vehicles", status_code=201)
 def create_vehicle(
     vehicle_data: VehicleCreate,
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     vehicle = Vehicle(**vehicle_data.model_dump())
     db.add(vehicle)
     db.commit()
     db.refresh(vehicle)
+    return vehicle
+
+@app.put("/api/vehicles/{vehicle_id}")
+def update_vehicle(
+    vehicle_id: int,
+    vehicle_data: VehicleCreate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    vehicle.make = vehicle_data.make
+    vehicle.model = vehicle_data.model
+    vehicle.category = vehicle_data.category
+    vehicle.price = vehicle_data.price
+    vehicle.quantity = vehicle_data.quantity
+
+    db.commit()
+    db.refresh(vehicle)
+
+    return vehicle
+
+
+@app.delete("/api/vehicles/{vehicle_id}")
+def delete_vehicle(
+    vehicle_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    db.delete(vehicle)
+    db.commit()
+
+    return {"message": "Vehicle deleted successfully"}
+
+class PurchaseRequest(BaseModel):
+    quantity: int = Field(gt=0)
+
+
+@app.post("/api/vehicles/{vehicle_id}/purchase")
+def purchase_vehicle(
+    vehicle_id: int,
+    purchase_data: PurchaseRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    if vehicle.quantity < purchase_data.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail="Insufficient vehicle stock",
+        )
+
+    vehicle.quantity -= purchase_data.quantity
+    db.commit()
+    db.refresh(vehicle)
+
+    return {
+        "message": "Vehicle purchased successfully",
+        "vehicle_id": vehicle.id,
+        "quantity_purchased": purchase_data.quantity,
+        "remaining_quantity": vehicle.quantity,
+    }
+
+
+class RestockRequest(BaseModel):
+    quantity: int = Field(gt=0)
+
+
+@app.post("/api/vehicles/{vehicle_id}/restock")
+def restock_vehicle(
+    vehicle_id: int,
+    restock_data: RestockRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    vehicle.quantity += restock_data.quantity
+    db.commit()
+    db.refresh(vehicle)
+
     return vehicle
 
 
