@@ -126,6 +126,3 @@ The `screenshots/` directory contains screenshots documenting the application in
 
 AI assistance was used during development for guidance with implementation, troubleshooting, and documentation. The generated suggestions were reviewed and tested during development, including running the backend test suite and manually checking application workflows. The developer remains responsible for understanding and explaining the submitted implementation.
 
-## Recording
-
-The assessment instructions request a screen-and-voice walkthrough recording. Include the recording in the GitHub repository before submission if it has not already been added. The walkthrough should explain the problem, solution approach, key implementation decisions, working and negative-input demonstrations, AI usage, challenges, and possible improvements.
