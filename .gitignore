@@ -8,3 +8,5 @@ frontend/dist/
 backend/*.db
 backend/*.sqlite3
 .vscode/
+Problem statement.docx
+*.db-journal

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
@@ -24,12 +25,19 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
-def create_access_token(username: str) -> str:
+
+def create_access_token(username: str, role: str = "user") -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(
         minutes=ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    payload = {"sub": username, "exp": expires_at}
+    payload = {
+        "sub": username,
+        "role": role,
+        "exp": expires_at,
+    }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -97,6 +105,21 @@ app = FastAPI(
     title="Car Dealership Inventory API",
     lifespan=lifespan,
 )
+
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 
 class VehicleCreate(BaseModel):
@@ -315,7 +338,11 @@ def login_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(user.username)
+   
+    access_token = create_access_token(
+        user.username,
+        role=user.role,
+    )
 
     return {
         "access_token": access_token,
